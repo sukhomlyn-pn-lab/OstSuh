@@ -1,95 +1,236 @@
-# Project: SuccessfulSuccess Meetings (Monorepo)
+# Architecture & System Specification: SuccessfulSuccess Meetings
 
-## Purpose and Scope
-This repository contains the local development stack and AWS deployment configuration for a per-user meetings application. The browser client lists, creates, edits, and deletes meetings for the signed-in user. Authentication is provided by Amazon Cognito.
+## 1. Overview & System Scope
+This project is a containerized, monorepo meeting management platform providing authenticated users with meeting lifecycle management. The system consists strictly of a Next.js frontend, a FastAPI backend, and a PostgreSQL database.
 
-This document describes the implementation currently in the repository. It differs from the initial lab example: the frontend is Next.js rather than Vite, meeting attendees are represented as participant records rather than an `attendee_count` input, and the AWS deployment templates use Lambda and Aurora rather than ECS and an Application Load Balancer.
+---
 
-## Repository Structure
-- `backend/` — Python API service. `app/api/` contains HTTP routes and dependencies; `app/schemas/` defines request/response validation; `app/models/` defines SQLAlchemy entities; `app/repositories/` handles database queries; `app/services/` contains meeting and user operations; `alembic/` contains versioned database migrations; `tests/` contains backend tests. `Dockerfile` is the local Compose image; `Dockerfile.lambda` packages the API for AWS Lambda.
-- `frontend/` — Next.js App Router application. `app/` contains routes and global styles; `components/` contains page, meeting, authentication, and UI components; `hooks/` contains client hooks; `lib/` contains API, auth, date-time, and shared type utilities; `public/` contains static assets. Its Dockerfile has development, production, and static-export targets.
-- `infra/` — AWS CloudFormation templates for Cognito authentication, ECR, the backend, and the frontend.
-- `.github/workflows/` — GitHub Actions workflow for backend Ruff and frontend ESLint/style checks on pushes to `main`.
-- `docker-compose.yml` — Local orchestration for PostgreSQL, backend, and frontend.
-- `Makefile` — Local development, test, lint, migration, seed, and AWS deployment commands.
-- `README.md` — Setup, local operation, authentication, and deployment instructions.
-- `SPEC.md` — Product requirements and behavioral specification.
+## 2. Repository Layout & Directory Structure
 
-## Runtime and Docker Contracts
-Compose builds the backend and frontend from their service Dockerfiles and runs PostgreSQL from the official image.
+```
+.
+├── .github/
+│   └── workflows/              # GitHub Actions CI/CD workflows (linting, test, deploy)
+├── backend/
+│   ├── alembic/                # Version-controlled database migrations
+│   │   ├── versions/           # Migration revision scripts
+│   │   └── env.py              # Alembic environment and database engine runner
+│   ├── app/
+│   │   ├── api/                # HTTP route handlers, API routers, and dependencies
+│   │   │   ├── v1/             # API v1 versioned endpoints (meetings)
+│   │   │   └── deps.py         # FastAPI dependency injection definitions
+│   │   ├── models/             # SQLAlchemy ORM database models
+│   │   ├── repositories/       # Database access and query encapsulation
+│   │   ├── schemas/            # Pydantic request/response validation schemas
+│   │   ├── services/           # Business domain logic
+│   │   ├── auth.py             # JWT token parsing, signature verification, auth rules
+│   │   ├── config.py           # Application settings and environment configuration
+│   │   ├── db.py               # Async SQLAlchemy engine and session factory
+│   │   └── main.py             # FastAPI entrypoint and middleware definition
+│   ├── tests/                  # Automated pytest test suites
+│   ├── alembic.ini             # Alembic configuration
+│   ├── Dockerfile              # Backend container build specification
+│   ├── entrypoint.sh           # Container bootstrap script (migration execution & server start)
+│   ├── pyproject.toml          # Python project metadata and dependencies
+│   └── uv.lock                 # Pinned dependency lockfile
+├── frontend/
+│   ├── app/                    # Next.js App Router (pages, layouts, globals.css)
+│   │   ├── (app)/              # Authenticated user route groups
+│   │   ├── layout.tsx          # Root layout and theme providers
+│   │   └── page.tsx            # Landing and dashboard views
+│   ├── components/             # React UI components
+│   │   ├── ui/                 # Atomic design / shadcn/ui primitives
+│   │   └── *.tsx               # Domain-specific components (forms, dialogs, lists)
+│   ├── hooks/                  # Client-side React hooks
+│   ├── lib/                    # Shared utilities, API client, date helpers, auth logic
+│   ├── public/                 # Static assets
+│   ├── Dockerfile              # Frontend multi-stage container build specification
+│   ├── next.config.ts          # Next.js runtime and export configuration
+│   ├── package.json            # Node.js dependencies and run scripts
+│   ├── package-lock.json       # Pinned Node.js dependency lockfile
+│   └── tsconfig.json           # TypeScript compiler configuration
+├── docker-compose.yml          # Multi-container local orchestration configuration
+├── Makefile                    # Developer CLI automation tasks
+└── PROJECT.md                  # System architecture and technical specification
+```
 
-| Service | Image/build base | Container port | Host port | Readiness and dependency |
-| --- | --- | ---: | ---: | --- |
-| `db` | `postgres:16-alpine` | 5432 | `${POSTGRES_PORT:-5432}` | `pg_isready` runs every 5 seconds, with a 5-second timeout and 10 retries. Database data persists in the `pgdata` named volume. |
-| `backend` | `python:3.12-slim`; copies `uv` from `ghcr.io/astral-sh/uv:latest` | 8000 | `${BACKEND_PORT:-8000}` | Waits for `db` with `condition: service_healthy`; applies Alembic migrations at startup when `RUN_MIGRATIONS_ON_START=true`; healthcheck calls `/health` every 10 seconds, with a 20-second start period. |
-| `frontend` | `node:22-alpine` | 3000 | `${FRONTEND_PORT:-3000}` | Depends on backend with `condition: service_started`; this orders startup but does not wait for backend health. |
+### Folder & Service Purpose
+- **Root**: Coordinates local orchestration (`docker-compose.yml`), workspace execution tasks (`Makefile`), and automated pipeline definitions (`.github/workflows/`).
+- **`backend/`**: Asynchronous Python API service utilizing FastAPI, SQLAlchemy ORM (asyncpg), Alembic schema migrations, and `uv` package management.
+- **`frontend/`**: Client application built with Next.js (App Router), React, Tailwind CSS, and shadcn/ui component primitives.
+- **Strict Boundary Rules**: The system architecture explicitly excludes caching or message brokering layers (e.g., Redis, Celery), reverse proxy daemons (e.g., Nginx), or orchestration manifests (e.g., Kubernetes Helm/manifests).
 
-The backend connects to PostgreSQL over the Compose network at `db:5432`; its database URL is assembled from `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`. The host port can be changed independently, for example to 5433 when host port 5432 is already in use. The browser uses `NEXT_PUBLIC_API_BASE_URL`, which defaults to `http://localhost:8000`.
+---
 
-The application image base tags are specified above. The copied `uv` image currently uses the floating `latest` tag, so not every image reference is version-pinned.
+## 3. Container & Infrastructure Specifications
 
-## API Contract
-The API is rooted at `/api/v1`. Meeting endpoints require `Authorization: Bearer <Cognito access token>` and operate only on the authenticated user's meetings. Timestamps are ISO-8601 strings and must include a UTC offset. Response timestamps are serialized in the configured application timezone.
+### Pinned Base Image Versions
+All environments must run on explicitly pinned container image base tags:
+- **Database (`db`)**: `postgres:16-alpine` (Official PostgreSQL 16 Alpine minimal image)
+- **Backend (`backend`)**: `python:3.12-slim` (Debian-based minimal image with pinned `uv` package manager binary from `ghcr.io/astral-sh/uv:0.4.18`)
+- **Frontend (`frontend`)**: `node:22-alpine` (Node.js 22 Alpine minimal image)
 
-### `GET /api/v1/meetings`
-Lists meetings overlapping a calendar day. Query parameters:
-- `date` — optional `YYYY-MM-DD`; defaults to today in `APP_TIMEZONE`.
-- `q` — optional search text, up to 200 characters.
-- `limit` — optional page size, default 100, range 1–500.
-- `offset` — optional zero-based offset, default 0.
+### Networking & Exposed Ports
+| Service | Container Port | Host Port Binding | Protocol | Description |
+| :--- | :---: | :---: | :---: | :--- |
+| `db` | `5432` | `${POSTGRES_PORT:-5432}` | TCP | PostgreSQL relational database |
+| `backend` | `8000` | `${BACKEND_PORT:-8000}` | HTTP | FastAPI ASGI server (`uvicorn`) |
+| `frontend` | `3000` | `${FRONTEND_PORT:-3000}` | HTTP | Next.js development/production server |
 
-Returns HTTP 200 with a paginated object:
+### Startup Lifecycle, Healthchecks & Dependency Graph
+```mermaid
+flowchart TD
+    db["Postgres Database (db:5432)"]
+    dbHealth{"Healthcheck: pg_isready"}
+    backend["FastAPI Container (backend:8000)"]
+    migrations["entrypoint.sh: alembic upgrade head"]
+    uvicorn["uvicorn app.main:app"]
+    backendHealth{"Healthcheck: GET /health"}
+    frontend["Next.js Container (frontend:3000)"]
 
+    db --> dbHealth
+    dbHealth -- "healthy (interval: 5s, timeout: 5s, retries: 10)" --> backend
+    backend --> migrations
+    migrations --> uvicorn
+    uvicorn --> backendHealth
+    backend -- "service_started" --> frontend
+```
+
+1. **Database Healthcheck**:
+   - Command: `pg_isready -U ${POSTGRES_USER:-app} -d ${POSTGRES_DB:-meetings}`
+   - Parameters: Interval `5s`, Timeout `5s`, Retries `10`.
+2. **Backend Startup Dependency**:
+   - The `backend` service specifies `depends_on: db: condition: service_healthy`.
+   - The container does not initialize application processes until PostgreSQL is accepting connections.
+3. **Database Migration & Process Execution**:
+   - The backend entrypoint script (`/usr/local/bin/entrypoint.sh`) intercepts container startup.
+   - When `RUN_MIGRATIONS_ON_START=true`, it runs `alembic upgrade head`.
+   - Upon successful migration completion, the script executes `exec "$@"`, starting Uvicorn (`uvicorn app.main:app --host 0.0.0.0 --port 8000`).
+4. **Backend Healthcheck**:
+   - Command: `curl -fsS http://localhost:8000/health || exit 1`
+   - Parameters: Interval `10s`, Timeout `5s`, Retries `10`, Start Period `20s`.
+5. **Frontend Startup Dependency**:
+   - The `frontend` service specifies `depends_on: backend: condition: service_started` to ensure deterministic service ordering.
+
+---
+
+## 4. API Contracts & Data Specifications
+
+The backend exposes a REST API rooted at `/api/v1`. All timestamp inputs and outputs are formatted according to **ISO 8601** with mandatory UTC offset (`YYYY-MM-DDTHH:mm:ss±HH:MM` or `YYYY-MM-DDTHH:mm:ssZ`). Responses render timestamps converted to the configured application timezone (default: `Europe/Kyiv`).
+
+### Common Header Contracts
+- `Content-Type: application/json`
+- `Authorization: Bearer <JWT>` (Required for meeting endpoints; verifies user identity)
+
+---
+
+### Endpoint: `GET /api/v1/meetings`
+Retrieves a paginated list of meetings overlapping the designated date window for the authenticated user.
+
+#### Query Parameters
+| Parameter | Type | Required | Default | Description |
+| :--- | :---: | :---: | :---: | :--- |
+| `date` | String | No | Today (`YYYY-MM-DD`) | Target calendar day in application timezone |
+| `q` | String | No | `null` | Substring search against meeting title/name and description |
+| `limit` | Integer | No | `100` | Pagination page size (Min: 1, Max: 500) |
+| `offset` | Integer | No | `0` | Pagination offset index (Min: 0) |
+
+#### Response: HTTP 200 OK
 ```json
 {
   "items": [
     {
       "id": "64c10442-643f-42de-9ab1-2db1c5f8c7bd",
-      "name": "Design Sync",
-      "description": "Review the next release",
-      "location": "Room 3",
-      "starts_at": "2026-10-27T10:00:00+03:00",
-      "ends_at": "2026-10-27T11:00:00+03:00",
+      "name": "Sprint Architecture Review",
+      "description": "Quarterly system design review",
+      "location": "Conference Room A",
+      "starts_at": "2026-11-02T10:00:00+02:00",
+      "ends_at": "2026-11-02T11:00:00+02:00",
       "participants": [
         {
           "id": "e69ff6d9-2237-4ee9-87a3-e7c3d22067d4",
-          "name": "Alex Example",
-          "email": "alex@example.com",
+          "name": "Jane Doe",
+          "email": "jane.doe@example.com",
           "position": 0
         }
       ],
-      "created_at": "2026-10-26T14:00:00+03:00",
-      "updated_at": "2026-10-26T14:00:00+03:00"
+      "created_at": "2026-11-01T15:30:00+02:00",
+      "updated_at": "2026-11-01T15:30:00+02:00"
     }
   ],
   "total": 1,
   "limit": 100,
   "offset": 0,
-  "date": "2026-10-27"
+  "date": "2026-11-02"
 }
 ```
 
-### `POST /api/v1/meetings`
-Creates a meeting for the authenticated user. Request body:
+---
 
+### Endpoint: `POST /api/v1/meetings`
+Creates a new meeting entity associated with the authenticated user.
+
+#### Request Body
 ```json
 {
-  "name": "Design Sync",
-  "description": "Review the next release",
-  "location": "Room 3",
-  "starts_at": "2026-10-27T10:00:00+03:00",
-  "ends_at": "2026-10-27T11:00:00+03:00",
+  "name": "Sprint Architecture Review",
+  "description": "Quarterly system design review",
+  "location": "Conference Room A",
+  "starts_at": "2026-11-02T10:00:00+02:00",
+  "ends_at": "2026-11-02T11:00:00+02:00",
   "participants": [
-    { "name": "Alex Example", "email": "alex@example.com" }
+    {
+      "name": "Jane Doe",
+      "email": "jane.doe@example.com"
+    }
   ]
 }
 ```
 
-`description` and `location` are optional and nullable. `participants` defaults to an empty list and accepts at most 50 unique participants; each participant has a required nonblank `name` (maximum 120 characters) and optional valid `email`. `name` is required and limited to 200 characters. `ends_at` must be later than `starts_at`.
+#### Request Field Specifications
+| Field | Type | Validation Rules | Description |
+| :--- | :---: | :--- | :--- |
+| `name` | String | Required, 1–200 characters, non-blank | Primary meeting title (`title` synonym) |
+| `description` | String \| null | Optional, max 2000 characters | Meeting agenda or context |
+| `location` | String \| null | Optional, max 200 characters | Physical location or virtual room URL |
+| `starts_at` | String (ISO Datetime) | Required, must include timezone offset | Meeting start timestamp |
+| `ends_at` | String (ISO Datetime) | Required, must be chronologically after `starts_at` | Meeting end timestamp |
+| `participants` | Array[Object] | Optional, max 50 unique items | Structured list of meeting attendees |
+| `participants[].name` | String | Required, 1–120 characters, non-blank | Participant full name |
+| `participants[].email`| String \| null | Optional, valid email syntax | Participant email address |
 
-Returns HTTP 201 with the created meeting in the `MeetingRead` response shape shown above and a `Location: /api/v1/meetings/{id}` header. Invalid input returns HTTP 422. Requests without valid authentication are rejected; callers cannot access another user's meetings.
+#### Response: HTTP 201 Created
+- **Header**: `Location: /api/v1/meetings/{id}`
+- **Body**: Complete `MeetingRead` JSON object (matching the element format inside `items` above).
 
-`GET /health` is an unauthenticated service health endpoint. It returns HTTP 200 when the API can query the database and HTTP 503 when the database is unreachable.
+#### Error Responses
+- **HTTP 401 Unauthorized**: Missing or invalid bearer token.
+- **HTTP 422 Unprocessable Entity**: Validation failure (e.g., `ends_at <= starts_at`, malformed datetime strings, duplicate participants).
 
-## Startup Flow
-Compose starts PostgreSQL and waits for its `pg_isready` healthcheck before starting the backend. The backend runs Alembic migrations during container startup, then serves HTTP on port 8000. Compose starts the frontend after the backend container starts; the frontend does not wait for the backend healthcheck. The developer runs the stack with `docker compose up --build` after installing Docker Desktop.
+---
+
+## 5. CI/CD & Deployment Output Requirements
+
+### Infrastructure Workflows
+The CI/CD deployment pipelines (executed via GitHub Actions or deployment scripts automating CloudFormation / S3 / CloudFront / compute provisioning) must execute deterministically through verified build, test, and deployment phases.
+
+### Post-Deployment Live URL Logging Contract
+Upon successful completion of the deployment workflow, the execution script and GitHub Actions job summary **must** explicitly log and print the public URLs in standard output:
+
+1. **Frontend Application URL**:
+   - Format: Direct HTTPS web URL (e.g., CloudFront distribution domain `https://<distribution-id>.cloudfront.net` or custom canonical domain `https://app.example.com`).
+2. **Backend API URL & Documentation**:
+   - Format: Direct HTTPS API base URL and OpenAPI documentation endpoint (e.g., `https://<api-id>.execute-api.<region>.amazonaws.com` or ALB public endpoint, accompanied by `<api-url>/docs`).
+
+#### Standard Output Schema
+The deployment automation script must emit outputs formatted as follows:
+
+```text
+============================================================
+              DEPLOYMENT SUMMARY & LIVE URLS
+============================================================
+Frontend Live URL : https://d111111abcdef8.cloudfront.net
+Backend API URL   : https://api.meetings.example.com
+API Documentation : https://api.meetings.example.com/docs
+============================================================
+```
