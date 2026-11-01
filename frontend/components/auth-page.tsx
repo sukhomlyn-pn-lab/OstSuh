@@ -495,7 +495,9 @@ function subtitle(step: Step): string {
   switch (step.kind) {
     case "signIn":
     case "signUp":
-      return "Use your email or Google to continue with SuccessfulSuccess — it's free!"
+      return authConfig.googleEnabled && authConfig.domain
+        ? "Use your email or Google to continue with SuccessfulSuccess — it's free!"
+        : "Use your email to continue with SuccessfulSuccess — it's free!"
     case "confirmSignUp":
       return `We emailed a 6-digit code to ${step.destination ?? step.email}. Enter it to finish signing up.`
     case "forgotPassword":
@@ -516,6 +518,7 @@ export function AuthPage() {
   }, [status, router])
 
   const onGoogle = async () => {
+    if (!isAuthConfigured) return
     if (!authConfig.googleEnabled || !authConfig.domain) {
       toast.info("Google sign-in isn't enabled on this deployment yet.")
       return
@@ -529,6 +532,7 @@ export function AuthPage() {
   }
 
   const isEntry = step.kind === "signIn" || step.kind === "signUp"
+  const showGoogle = authConfig.googleEnabled && Boolean(authConfig.domain)
 
   if (status !== "signedOut") {
     return (
@@ -573,46 +577,48 @@ export function AuthPage() {
                   Sign-in isn&apos;t configured. Run <code>make aws-deploy-auth</code> and put the
                   values from <code>make aws-auth-env</code> in <code>.env</code>.
                 </div>
-              ) : null}
-
-              {isEntry ? (
-                <>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="mt-8 h-12 w-full gap-3 text-[0.95rem]"
-                    onClick={onGoogle}
-                  >
-                    <GoogleIcon />
-                    Continue with Google
-                  </Button>
-                  <FieldSeparator className="my-6">or</FieldSeparator>
-                </>
               ) : (
-                <div className="mt-8" />
+                <>
+                  {isEntry && showGoogle ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="mt-8 h-12 w-full gap-3 text-[0.95rem]"
+                        onClick={onGoogle}
+                      >
+                        <GoogleIcon />
+                        Continue with Google
+                      </Button>
+                      <FieldSeparator className="my-6">or</FieldSeparator>
+                    </>
+                  ) : null}
+
+                  <div className={isEntry && !showGoogle ? "mt-8" : undefined}>
+                    {/* Keyed by step so each form starts empty. */}
+                    {step.kind === "signIn" ? <SignInForm key="signIn" onStep={setStep} /> : null}
+                    {step.kind === "signUp" ? <SignUpForm key="signUp" onStep={setStep} /> : null}
+                    {step.kind === "confirmSignUp" ? <ConfirmSignUpForm step={step} /> : null}
+                    {step.kind === "forgotPassword" ? <ForgotPasswordForm onStep={setStep} /> : null}
+                    {step.kind === "resetPassword" ? <ResetPasswordForm step={step} /> : null}
+                  </div>
+
+                  {isEntry ? (
+                    <p className="text-muted-foreground mt-6 text-center text-sm">
+                      {step.kind === "signIn" ? "Don't have an account?" : "Already have an account?"}{" "}
+                      <button
+                        type="button"
+                        className="text-primary font-semibold hover:underline"
+                        onClick={() =>
+                          setStep({ kind: step.kind === "signIn" ? "signUp" : "signIn" })
+                        }
+                      >
+                        {step.kind === "signIn" ? "Sign up" : "Log in"}
+                      </button>
+                    </p>
+                  ) : null}
+                </>
               )}
-
-              {/* Keyed by step so each form starts empty. */}
-              {step.kind === "signIn" ? <SignInForm key="signIn" onStep={setStep} /> : null}
-              {step.kind === "signUp" ? <SignUpForm key="signUp" onStep={setStep} /> : null}
-              {step.kind === "confirmSignUp" ? <ConfirmSignUpForm step={step} /> : null}
-              {step.kind === "forgotPassword" ? <ForgotPasswordForm onStep={setStep} /> : null}
-              {step.kind === "resetPassword" ? <ResetPasswordForm step={step} /> : null}
-
-              {isEntry ? (
-                <p className="text-muted-foreground mt-6 text-center text-sm">
-                  {step.kind === "signIn" ? "Don't have an account?" : "Already have an account?"}{" "}
-                  <button
-                    type="button"
-                    className="text-primary font-semibold hover:underline"
-                    onClick={() =>
-                      setStep({ kind: step.kind === "signIn" ? "signUp" : "signIn" })
-                    }
-                  >
-                    {step.kind === "signIn" ? "Sign up" : "Log in"}
-                  </button>
-                </p>
-              ) : null}
 
               <p className="text-muted-foreground mt-6 text-center text-xs leading-relaxed">
                 By continuing, you agree to the SuccessfulSuccess Terms of Use and
