@@ -32,7 +32,7 @@ export MSYS2_ARG_CONV_EXCL := *
 AWS ?= docker run --rm \
 	-e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_SESSION_TOKEN \
 	-e AWS_DEFAULT_REGION=$(AWS_REGION) \
-	-v $(CURDIR):/aws -w /aws \
+	-v "$(CURDIR):/aws" -w /aws \
 	amazon/aws-cli:latest
 
 AUTH_STACK ?= $(PROJECT_NAME)-auth
